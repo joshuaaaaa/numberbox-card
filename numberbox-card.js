@@ -1,6 +1,6 @@
 ((LitElement) => {
 
-console.info('NUMBERBOX_CARD 4.17');
+console.info('NUMBERBOX_CARD 4.18');
 const html = LitElement.prototype.html;
 const css = LitElement.prototype.css;
 class NumberBox extends LitElement {
@@ -10,6 +10,7 @@ constructor() {
 	this.bounce = false;
 	this.pending = false;
 	this.rolling = false;
+	this.editing = false;
 	this.state = 0;
 	this.old = {state: NaN, t:{}, h:''};
 }
@@ -34,12 +35,13 @@ render() {
 		}
 		if(d[j]!==null){
 			if(this.config[j] === undefined){ this.config[j]=this.stateObj.attributes[j];}
+			if(this.config[j] === undefined && this.attrs && this.attrs[j]){ this.config[j]=this.stateObj.attributes[this.attrs[j]];}
 			if(isNaN(parseFloat(this.config[j]))){this.config[j]=d[j];}
 		}
 	}
 
 	return html`
-	<ha-card class="${(!this.config.border)?'noborder':''}">
+	<ha-card class="${(!this.config.border)?'noborder':''} ${this.config.align?'align-'+this.config.align:''}" style="${this.cardStyle()}">
 		${(this.config.icon || this.config.picture || this.config.name) ? html`<div class="${this.config.toggle?'gridt':'grid'}">
 		<div class="grid-content grid-left" @click="${() => this.moreInfo()}">
 			${this.config.picture ? html`
@@ -58,6 +60,7 @@ render() {
 		${this.config.toggle ? html`<div class="grid-content grid-right"><ha-entity-toggle .stateObj="${this.config.toggle}"
 		.hass="${this._hass}"></ha-entity-toggle></div>` : null }
 		</div>` : this.renderNum() }
+		${this.renderBar()}
 	</ha-card>
 `;
 }
@@ -66,6 +69,13 @@ updated(x) {
 	if(this.old.h !=''){
 		const a=this.renderRoot.querySelector('.secondary');
 		if(a){a.innerHTML=this.old.h;}
+	}
+	if(this.editing){
+		const i=this.renderRoot.querySelector('.num-input');
+		if(i && this.renderRoot.activeElement !== i){
+			i.focus();
+			if(i.select){i.select();}
+		}
 	}
 }
 
@@ -133,11 +143,16 @@ secondaryInfo(){
 }
 
 renderNum(){
+	const l=this.lim();
+	const b=this.config.button_style?' btn-'+this.config.button_style:'';
+	const n=this.config.name||this.config.entity;
 	return html`
 	<section class="body">
 	<div class="main">
 		<div class="cur-box">
-		<ha-icon class="padl" tabindex="0" role="button"
+		<ha-icon class="padl${b} ${l.max?'atlimit':''}" tabindex="0" role="button"
+			aria-label="${n} +${this.config.step}"
+			aria-disabled="${l.max?'true':'false'}"
 			icon="${this.config.icon_plus}" 
 			@click="${() => this.setNumb(1)}" 
 			@mousedown="${() => this.Press(1)}"
@@ -147,10 +162,22 @@ renderNum(){
 			@touchend="${() => this.Press(2)}"
 		>
 		</ha-icon>
-		<div class="cur-num-box" @click="${() => this.moreInfo()}" >
-			<h3 class="cur-num ${(this.pending===false)? '':'upd'}"> ${this.niceNum()} </h3>
+		<div class="cur-num-box ${this.config.show_limits?'col':''}" @click="${() => this.numClick()}" >
+			${this.editing ? html`<input class="num-input"
+				type="${this.isTime()?'text':'number'}"
+				inputmode="${this.isTime()?'text':'decimal'}"
+				step="${this.config.step}"
+				.value="${this.editVal()}"
+				aria-label="${n}"
+				@click="${(e) => e.stopPropagation()}"
+				@keydown="${(e) => this.editKey(e)}"
+				@blur="${(e) => this.editDone(e)}"
+			>` : html`<h3 class="cur-num ${(this.pending===false)? '':'upd'}"> ${this.niceNum()} </h3>`}
+			${this.config.show_limits ? html`<div class="limits">${this.limText()}</div>` : null}
 		</div>
-		<ha-icon class="padr" tabindex="0" role="button"
+		<ha-icon class="padr${b} ${l.min?'atlimit':''}" tabindex="0" role="button"
+			aria-label="${n} -${this.config.step}"
+			aria-disabled="${l.min?'true':'false'}"
 			icon="${this.config.icon_minus}"
 			@click="${() => this.setNumb(0)}"
 			@mousedown="${() => this.Press(0)}"
@@ -163,6 +190,104 @@ renderNum(){
 		</div>
 	</div>
 	</section>`;
+}
+
+cardStyle(){
+	const c=this.config;
+	const p=(v)=>(v===undefined||v===null||v==='')?null:(isNaN(v)?String(v):v+'px');
+	const s=[];
+	const add=(n,v)=>{if(v!==null&&v!==undefined&&v!==''&&v!==false){s.push(n+':'+v);}};
+	add('--numberbox-font-size',p(c.font_size));
+	add('--numberbox-font-weight',c.font_weight!==undefined?c.font_weight:(c.bold?'bold':null));
+	add('--numberbox-color',c.color);
+	add('--numberbox-pending-color',c.pending_color);
+	add('--numberbox-icon-size',p(c.icon_size));
+	add('--numberbox-icon-color',c.icon_color);
+	add('--numberbox-button-color',c.button_color);
+	add('--numberbox-progress-color',c.progress_color);
+	return s.join(';');
+}
+
+curNum(){
+	let v=this.pending;
+	if(v===false){v=this.timeNum(this.state);}
+	v=Number(v);
+	return isNaN(v)?NaN:v;
+}
+
+lim(){
+	const r={min:false,max:false,pct:null};
+	const v=this.curNum();
+	const mn=Number(this.config.min), mx=Number(this.config.max);
+	const st=Number(this.config.step)||0;
+	if(isNaN(v)||isNaN(mn)||isNaN(mx)){return r;}
+	r.max=(Math.round((v+st)*1e9)/1e9) > mx;
+	r.min=(Math.round((v-st)*1e9)/1e9) < mn;
+	if(mx>mn && mx<9e9){r.pct=Math.max(0,Math.min(100,(v-mn)*100/(mx-mn)));}
+	return r;
+}
+
+renderBar(){
+	if(!this.config.progress){return null;}
+	const p=this.lim().pct;
+	if(p===null){return null;}
+	return html`<div class="bar"><div class="bar-fill" style="width:${p}%"></div></div>`;
+}
+
+limText(){
+	const mn=Number(this.config.min), mx=Number(this.config.max);
+	if(isNaN(mn)||isNaN(mx)||mx>=9e9){return '';}
+	const f=(x)=>this.isTime()?this.numTime(x,1,this.config.unit):x;
+	return f(mn)+' – '+f(mx);
+}
+
+isTime(){
+	const u=this.config.unit;
+	return (u=='time'||u=='timehm');
+}
+
+editVal(){
+	const v=this.curNum();
+	if(isNaN(v)){return '';}
+	return this.isTime()? this.numTime(v,0,this.config.unit) : String(v);
+}
+
+numClick(){
+	if(this.config.edit && !this.editing){
+		clearTimeout(this.bounce);
+		this.editing=true;
+		return;
+	}
+	this.moreInfo();
+}
+
+editKey(e){
+	e.stopPropagation();
+	if(e.key=='Enter'){this.editDone(e);}
+	else if(e.key=='Escape'){this.editing=false;}
+}
+
+editDone(e){
+	if(!this.editing){return;}
+	this.editing=false;
+	let v=this.timeNum(e.target.value);
+	if(e.target.value==='' || isNaN(v)){return;}
+	const mn=Number(this.config.min), mx=Number(this.config.max);
+	if(!isNaN(mn)){v=Math.max(mn,v);}
+	if(!isNaN(mx)){v=Math.min(mx,v);}
+	v=Math.round(v*1e9)/1e9;
+	if(v===this.curNum()){return;}
+	this.pending=v;
+	this.haptic();
+	clearTimeout(this.bounce);
+	this.publishNum(this);
+}
+
+haptic(t){
+	if(!this.config.haptic){return;}
+	const e=new Event('haptic',{bubbles:true,composed:true});
+	e.detail=(typeof this.config.haptic=='string')?this.config.haptic:(t||'light');
+	this.dispatchEvent(e);
 }
 
 
@@ -180,6 +305,9 @@ Press(v,k) {
 timeNum(x,s,m){
 	x=x+'';
 	if(x.indexOf(':')>0){
+		if(x.indexOf('T')>0){x=x.split('T').pop();}
+		if(x.indexOf(' ')>0){x=x.split(' ').pop();}
+		if(x.indexOf('+')>0){x=x.split('+')[0];}
 		x = x.split(':');s = 0; m = 1;
 		while (x.length > 0) {
 			s += m * parseInt(x.pop(), 10);
@@ -211,6 +339,7 @@ setNumb(c){
 	}else{
 		if(adval <= Number(this.config.max) && adval >= Number(this.config.min)){
 			this.pending = adval;
+			this.haptic();
 			if(this.config.delay){
 				clearTimeout(this.bounce);
 				this.bounce = setTimeout(this.publishNum, this.config.delay, this);
@@ -224,8 +353,19 @@ setNumb(c){
 publishNum(dhis){
 	if(dhis.pending===false){return;}
 	const s=dhis.config.service.split('.');
-	if(s[0]=='input_datetime'){dhis.pending=dhis.numTime(dhis.pending,1);}
-	const v = { ...dhis.config.service_params, [dhis.config.param]: dhis.pending };
+	let p=dhis.config.param;
+	if(s[0]=='input_datetime'){
+		dhis.pending=dhis.numTime(dhis.pending,1);
+		const a=dhis.stateObj?dhis.stateObj.attributes:{};
+		if(p=='time' && a.has_date && a.has_time){
+			const day=(dhis.stateObj.state+'').split(' ')[0];
+			if(/^\d{4}-\d{2}-\d{2}$/.test(day)){
+				p='datetime';
+				dhis.pending=day+' '+dhis.pending;
+			}
+		}
+	}
+	const v = { ...dhis.config.service_params, [p]: dhis.pending };
 	dhis.pending=false;
 	dhis.old.state=dhis.state;
 	dhis._hass.callService(s[0], s[1], v);
@@ -291,6 +431,7 @@ static get properties() {
 		bounce: {},
 		rolling: {},
 		pending: {},
+		editing: {},
 		state: {},
 		old: {},
 	};
@@ -313,13 +454,52 @@ static get styles() {
 	.main{display:flex;flex-direction:row;align-items:center;justify-content:center}
 	.cur-box{display:flex;align-items:center;justify-content:center;flex-direction:row-reverse}
 	.cur-num-box{display:flex;align-items:center}
+	.cur-num-box.col{flex-direction:column;justify-content:center}
 	.cur-num{
-		font-size:var(--paper-font-subhead_-_font-size);
-		line-height:var(--paper-font-subhead_-_line-height);
-		font-weight:normal;margin:0}
-	.cur-unit{font-size:80%;opacity:0.5}
-	.upd{color:#f00}
-	.padr,.padl{padding:8px;cursor:pointer}
+		font-size:var(--numberbox-font-size,var(--paper-font-subhead_-_font-size));
+		line-height:var(--numberbox-line-height,var(--paper-font-subhead_-_line-height));
+		color:var(--numberbox-color,inherit);
+		font-weight:var(--numberbox-font-weight,normal);
+		margin:0;white-space:nowrap}
+	.cur-unit{font-size:var(--numberbox-unit-size,80%);
+		opacity:var(--numberbox-unit-opacity,0.5);padding-left:2px}
+	.upd{color:var(--numberbox-pending-color,#f00)}
+	.padr,.padl{padding:8px;cursor:pointer;border-radius:50%;
+		color:var(--numberbox-icon-color,inherit);
+		--mdc-icon-size:var(--numberbox-icon-size,24px);
+		transition:background-color .15s ease-in-out,transform .1s ease-in-out,opacity .15s ease-in-out}
+	.padr:hover,.padl:hover{background-color:var(--numberbox-hover-color,rgba(127,127,127,0.15))}
+	.padr:active,.padl:active{transform:scale(0.88)}
+	.padr:focus-visible,.padl:focus-visible{
+		outline:2px solid var(--primary-color,#03a9f4);outline-offset:1px}
+	.atlimit{opacity:0.3;cursor:default}
+	.btn-outlined,.btn-filled,.btn-square{margin:2px 4px}
+	.btn-outlined{border:1px solid var(--divider-color,rgba(127,127,127,0.4))}
+	.btn-filled{background-color:var(--numberbox-button-color,var(--secondary-background-color))}
+	.btn-square{border-radius:6px}
+	.btn-square.btn-square{border-radius:6px}
+	.num-input{
+		font-size:var(--numberbox-font-size,var(--paper-font-subhead_-_font-size));
+		font-family:inherit;font-weight:var(--numberbox-font-weight,normal);
+		color:var(--primary-text-color);background:var(--card-background-color,transparent);
+		border:1px solid var(--primary-color,#03a9f4);border-radius:4px;
+		width:4.5em;max-width:100%;text-align:center;padding:2px 4px;margin:0;
+		-moz-appearance:textfield;appearance:textfield}
+	.num-input::-webkit-outer-spin-button,.num-input::-webkit-inner-spin-button{
+		-webkit-appearance:none;margin:0}
+	.limits{font-size:11px;line-height:1.2;padding:0 4px;
+		color:var(--secondary-text-color);white-space:nowrap}
+	.bar{height:var(--numberbox-progress-height,3px);margin:2px 12px 2px;border-radius:3px;
+		background-color:var(--numberbox-progress-track,rgba(127,127,127,0.25));overflow:hidden}
+	.bar-fill{height:100%;border-radius:3px;
+		background-color:var(--numberbox-progress-color,var(--primary-color,#03a9f4));
+		transition:width .2s ease-in-out}
+	ha-card.align-left .body{justify-items:start}
+	ha-card.align-right .body{justify-items:end}
+	@media (prefers-reduced-motion: reduce){
+		.padr,.padl,.bar-fill{transition:none}
+		.padr:active,.padl:active{transform:none}
+	}
 	.grid {
 		display: grid;
 		grid-template-columns: repeat(2, auto);
@@ -366,9 +546,13 @@ getCardSize() {
 setConfig(config) {
 	if (!config.entity) throw new Error('Please define an entity.');
 	const c=config.entity.split('.')[0];
-	if (!(config.service || c == 'input_number' || c == 'number')){
+	const dom=NumberBox.domains()[c];
+	if (!(config.service || c == 'input_number' || c == 'number' || dom)){
 		throw new Error('Please define a number entity.');
 	}
+	const pre=dom?{...dom}:{};
+	this.attrs=(!config.param || config.param==pre.param) ? (pre.attrs||{}) : {};
+	delete pre.attrs;
 	this.config = {
 		icon_plus: "mdi:plus",
 		icon_minus: "mdi:minus",
@@ -380,6 +564,7 @@ setConfig(config) {
 		initial: undefined,
 		moreinfo: config.entity,
 		service_params: {entity_id: config.entity},
+		...pre,
 		...config
 	};
 	if(this.config.service.split('.').length < 2){
@@ -399,6 +584,8 @@ set hass(hass) {
 }
 
 shouldUpdate(changedProps) {
+	if(changedProps.has('editing')){ return true; }
+	if(this.editing){ return false; }
 	const o = this.old.t;
 	for(const p in o){if(p in this._hass.states && this._hass.states[p].last_updated != o[p]){ return true; }}
 	if( changedProps.has('config') || changedProps.has('stateObj') || changedProps.has('pending') ){
@@ -412,6 +599,25 @@ static getConfigElement() {
 
 static getStubConfig() {
 	return {border: true};
+}
+
+static domains() {
+	return {
+		cover:{service:'cover.set_cover_position',param:'position',state:'current_position',
+			min:0,max:100,step:10,unit:'%',icon_plus:'mdi:arrow-up',icon_minus:'mdi:arrow-down'},
+		fan:{service:'fan.set_percentage',param:'percentage',state:'percentage',
+			min:0,max:100,step:10,unit:'%'},
+		light:{service:'light.turn_on',param:'brightness',state:'brightness',
+			min:0,max:255,step:25,unit:false},
+		media_player:{service:'media_player.volume_set',param:'volume_level',state:'volume_level',
+			min:0,max:1,step:0.05,unit:false},
+		climate:{service:'climate.set_temperature',param:'temperature',state:'temperature',
+			attrs:{min:'min_temp',max:'max_temp',step:'target_temp_step'}},
+		input_datetime:{service:'input_datetime.set_datetime',param:'time',
+			unit:'time',min:0,max:86340,step:60},
+		timer:{service:'timer.start',param:'duration',state:'duration',
+			unit:'time',min:0,max:86340,step:60}
+	};
 }
 
 } customElements.define('numberbox-card', NumberBox);
@@ -568,6 +774,89 @@ render() {
 		@input=${this.updVal}
 		type="number"
 	></ha-textfield>
+</div>
+<div><b>Display</b></div>
+<div class="side">
+	<ha-textfield
+		label="Value font size (eg 26 or 1.8em)"
+		.value="${(this.config.font_size!==undefined)?this.config.font_size:''}"
+		.configValue=${'font_size'}
+		@input=${this.updVal}
+	></ha-textfield>
+	<ha-textfield
+		label="Value color (eg green, #ff0)"
+		.value="${(this.config.color!==undefined)?this.config.color:''}"
+		.configValue=${'color'}
+		@input=${this.updVal}
+	></ha-textfield>
+</div>
+<div class="side">
+	<ha-textfield
+		label="Button icon size (px)"
+		.value="${(this.config.icon_size!==undefined)?this.config.icon_size:''}"
+		.configValue=${'icon_size'}
+		@input=${this.updVal}
+		type="number"
+	></ha-textfield>
+	<ha-textfield
+		label="Button icon color"
+		.value="${(this.config.icon_color!==undefined)?this.config.icon_color:''}"
+		.configValue=${'icon_color'}
+		@input=${this.updVal}
+	></ha-textfield>
+</div>
+<div class="side">
+	<ha-textfield
+		label="Button style (outlined/filled/square)"
+		.value="${(this.config.button_style!==undefined)?this.config.button_style:''}"
+		.configValue=${'button_style'}
+		@input=${this.updVal}
+	></ha-textfield>
+	<ha-textfield
+		label="Align (left/center/right)"
+		.value="${(this.config.align!==undefined)?this.config.align:''}"
+		.configValue=${'align'}
+		@input=${this.updVal}
+	></ha-textfield>
+</div>
+<div class="side">
+	<ha-formfield label="Bold value">
+		<ha-switch
+			.checked=${this.config.bold===true}
+			.configValue="${'bold'}"
+			@change=${this.updVal}
+		></ha-switch>
+	</ha-formfield>
+	<ha-formfield label="Progress bar">
+		<ha-switch
+			.checked=${this.config.progress===true}
+			.configValue="${'progress'}"
+			@change=${this.updVal}
+		></ha-switch>
+	</ha-formfield>
+</div>
+<div class="side">
+	<ha-formfield label="Show min/max">
+		<ha-switch
+			.checked=${this.config.show_limits===true}
+			.configValue="${'show_limits'}"
+			@change=${this.updVal}
+		></ha-switch>
+	</ha-formfield>
+	<ha-formfield label="Type value">
+		<ha-switch
+			.checked=${this.config.edit===true}
+			.configValue="${'edit'}"
+			@change=${this.updVal}
+		></ha-switch>
+	</ha-formfield>
+	<ha-formfield label="Haptic">
+		<ha-switch
+			.checked=${this.config.haptic===true}
+			.configValue="${'haptic'}"
+			@change=${this.updVal}
+		></ha-switch>
+	</ha-formfield>
 </div>
 <div><b>Advanced Config</b> <a target="_blank" href="https://github.com/htmltiger/numberbox-card#configuration">more info</a></div>
 <div class="side">

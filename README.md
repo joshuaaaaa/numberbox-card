@@ -46,6 +46,92 @@ or added by clicking the "Add to lovelace" button on the HACS dashboard after in
 | secondary_info | string |  | `last_changed` `last_updated` or any text/html,<br />you can also display states or other attributes of any entity for eg. <br /> `Light is %light.office_1:state` <br />`Room temp is %climate.heating:attributes:current_temperature:~1` (:~x digits after decimal) <br />`%switch.switch_2:last_updated`
 | unit | string/bool  | `unit_of_measurement` | Override unit string (set to `false` to hide) <br />`time` to display the number in hh:mm:ss<br />`timehm` to display the number in hh:mm<br />to use javascript on state value use brackets to eval for eg. `(value*100)` to change the display value
 
+## Display options
+
+Everything below is optional and works without `card-mod`.
+
+![numberbox-card display options](example5.png)
+
+| Name | Type | Default | Description
+| ---- | ---- | ------- | -----------
+| font_size | number/string | theme | value font size, `26` is read as `26px`, strings pass through (`1.8em`)
+| bold | bool | `false` | bold value
+| font_weight | number/string |  | full control over the weight, wins over `bold`
+| color | string | theme | value color, eg `green`, `#ff9800`, `var(--primary-color)`
+| pending_color | string | `#f00` | color of the value while the change is waiting for `delay` to pass
+| icon_size | number | `24` | size of the plus/minus icons in px
+| icon_color | string | theme | color of the plus/minus icons
+| button_style | string |  | `outlined`, `filled` or `square` to give the buttons a shape
+| button_color | string | theme | background of `filled` buttons
+| align | string | `center` | `left`, `center` or `right`, for cards without a name
+| progress | bool | `false` | thin progress bar showing the value between `min` and `max`
+| progress_color | string | theme | color of the progress bar
+| show_limits | bool | `false` | small `min – max` line under the value
+| edit | bool | `false` | tap the value to type it in directly, `Enter` or leaving the field saves it, `Esc` cancels. The name/icon still opens more-info
+| haptic | bool/string | `false` | haptic feedback on the companion app, `true` is `light`, or name one of `success` `warning` `failure` `light` `medium` `heavy` `selection`
+
+```yaml
+type: custom:numberbox-card
+entity: input_number.my_slider
+border: true
+font_size: 28
+bold: true
+color: '#03a9f4'
+button_style: filled
+icon_size: 28
+progress: true
+show_limits: true
+edit: true
+haptic: true
+```
+
+The plus (or minus) button dims automatically when another step would leave the
+`min`/`max` range, the buttons have hover/press/keyboard-focus states and the
+`aria-label`s tell a screen reader which entity and step it is about.
+
+### CSS variables
+
+The same values can be set in a theme or with `card-mod`, so one theme can style
+every numberbox at once:
+
+`--numberbox-font-size` `--numberbox-line-height` `--numberbox-font-weight`
+`--numberbox-color` `--numberbox-pending-color` `--numberbox-unit-size`
+`--numberbox-unit-opacity` `--numberbox-icon-size` `--numberbox-icon-color`
+`--numberbox-button-color` `--numberbox-hover-color`
+`--numberbox-progress-color` `--numberbox-progress-track` `--numberbox-progress-height`
+
+## Entity presets
+
+These domains work with just an `entity`, the service/param/state/min/max/step
+below are filled in for you and any of them can still be overridden:
+
+| Domain | service | param | state | min | max | step
+| ------ | ------- | ----- | ----- | --- | --- | ----
+| `input_number` `number` | `<domain>.set_value` | `value` | state | attribute | attribute | attribute
+| `cover` | `cover.set_cover_position` | `position` | `current_position` | 0 | 100 | 10
+| `fan` | `fan.set_percentage` | `percentage` | `percentage` | 0 | 100 | 10
+| `light` | `light.turn_on` | `brightness` | `brightness` | 0 | 255 | 25
+| `media_player` | `media_player.volume_set` | `volume_level` | `volume_level` | 0 | 1 | 0.05
+| `climate` | `climate.set_temperature` | `temperature` | `temperature` | `min_temp` | `max_temp` | `target_temp_step`
+| `input_datetime` | `input_datetime.set_datetime` | `time` | state | 0 | 86340 | 60
+| `timer` | `timer.start` | `duration` | `duration` | 0 | 86340 | 60
+
+```yaml
+type: custom:numberbox-card
+entity: cover.kitchen_blind
+border: true
+progress: true
+```
+
+`input_datetime` helpers that have **both** a date and a time are supported too:
+the card edits the time part and sends `datetime` with the existing date, so the
+date is not lost.
+
+> `timer` note: `timer.start` only overrides the duration of the current run.
+> Home Assistant restores the helper's configured duration once the timer
+> finishes, so the card cannot make a new duration permanent. Point the card at
+> an `input_number` and start the timer from an automation if you need that.
+
 #### Advanced Config for climate/fan/input_datetime etc
 
 
